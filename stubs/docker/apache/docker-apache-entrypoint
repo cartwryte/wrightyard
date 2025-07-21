@@ -2,7 +2,7 @@
 set -e
 
 # The path to the directory we are waiting for, must match the DocumentRoot.
-DOCUMENT_ROOT="/var/www/html"
+DOCUMENT_ROOT="/workspace/.wrightyard/opencart"
 
 echo "Apache entrypoint: Waiting for document root ${DOCUMENT_ROOT} to be created..."
 

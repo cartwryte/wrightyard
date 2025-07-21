@@ -22,7 +22,7 @@ RUN install-php-extensions \
     opcache
 
 # Set working directory
-WORKDIR /var/www/html
+WORKDIR /workspace/.wrightyard/opencart
 
 # Copy and grant execution rights to our entrypoint script
 COPY docker/php/docker-wrightyard-entrypoint /usr/local/bin/

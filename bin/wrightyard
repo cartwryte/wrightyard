@@ -5,7 +5,12 @@ set -e
 
 # --- Variable Definitions ---
 PROJECT_ROOT=$(pwd)
+# The directory inside the project where environment files will be stored.
+WRIGHTYARD_DIR=".wrightyard"
+WRIGHTYARD_PATH="$PROJECT_ROOT/$WRIGHTYARD_DIR"
+# The path to the stub files inside the wrightyard package.
 STUBS_DIR="$(cd "$(dirname "$0")/../stubs" && pwd)"
+# Project name for Docker Compose to avoid container name conflicts.
 PROJECT_NAME=$(basename "$PROJECT_ROOT")
 
 # --- Helper function for interactive prompts ---
@@ -21,43 +26,144 @@ ask_to_overwrite() {
     return 0
 }
 
+# --- Function to auto-configure package name in compose.yaml ---
+auto_configure_package_name() {
+    echo "-> Auto-configuring package name..."
+    local compose_file="$WRIGHTYARD_PATH/compose.yaml"
+    local root_composer_json="$PROJECT_ROOT/composer.json"
+
+    if [ -f "$root_composer_json" ]; then
+        # Read the package name using PHP, as it's guaranteed to be in the dev environment.
+        local package_name
+        package_name=$(php -r 'echo json_decode(file_get_contents("'"$root_composer_json"'"))->name;')
+
+        if [ -n "$package_name" ]; then
+            # Use `sed` to replace the placeholder. This command is cross-platform (Linux & macOS).
+            sed -i.bak "s|__PACKAGE_NAME__|$package_name|g" "$compose_file"
+            rm -f "${compose_file}.bak" # Remove the backup file created by sed.
+            echo "-> Set DEV_PACKAGE_NAME to '$package_name' in compose.yaml."
+        else
+            echo "-> Warning: Could not extract package name from composer.json."
+        fi
+    else
+        echo "-> Warning: Root composer.json not found. Skipping auto-configuration."
+    fi
+}
+
+# --- Function to update .gitignore ---
+update_gitignore() {
+    local gitignore_file="$PROJECT_ROOT/.gitignore"
+
+    # Check if .gitignore exists
+    if [ ! -f "$gitignore_file" ]; then
+        echo "-> No .gitignore found, skipping gitignore update."
+        return
+    fi
+
+    # Check if .wrightyard is already ignored
+    if grep -q "^\.wrightyard" "$gitignore_file"; then
+        echo "-> .wrightyard already exists in .gitignore. Skipping."
+        return
+    fi
+
+    # Add .wrightyard to .gitignore
+    echo "-> Adding .wrightyard to .gitignore..."
+    echo "" >> "$gitignore_file"
+    echo "# Wrightyard environment files" >> "$gitignore_file"
+    echo ".wrightyard" >> "$gitignore_file"
+    echo "-> .wrightyard added to .gitignore successfully."
+}
+
+# --- Function to set up shell aliases ---
+setup_aliases() {
+    local shell_config_file
+
+    if [[ "$SHELL" == *"zsh"* ]] || [ -n "$ZSH_VERSION" ]; then
+        shell_config_file="$HOME/.zshrc"
+    elif [[ "$SHELL" == *"bash"* ]] || [ -n "$BASH_VERSION" ]; then
+        shell_config_file="$HOME/.bashrc"
+    else
+        shell_config_file="$HOME/.profile"
+    fi
+
+    if [ ! -f "$shell_config_file" ]; then
+        echo "-> Could not find shell config file ($shell_config_file), skipping alias setup."
+        return
+    fi
+
+    local alias_block=$(cat <<'EOF'
+
+# --- Cartwryte Wrightyard Aliases ---
+alias wrightyard='vendor/bin/wrightyard'
+alias wy='vendor/bin/wrightyard'
+EOF
+)
+
+    # Check if the alias is already present
+    if grep -q "Cartwryte Wrightyard Aliases" "$shell_config_file"; then
+        echo "-> Wrightyard aliases already exist in $shell_config_file. Skipping."
+    else
+        echo "-> Adding Wrightyard aliases to $shell_config_file..."
+        echo "$alias_block" >> "$shell_config_file"
+        echo "-> Aliases added successfully."
+        echo "   Please restart your terminal session or run 'source $shell_config_file' to use them."
+    fi
+}
+
 # --- Command Parsing ---
 case "$1" in
     install)
-        echo "Publishing Wrightyard environment files..."
+        echo "Publishing Wrightyard environment files to '$WRIGHTYARD_DIR/'..."
 
-        if ask_to_overwrite "$PROJECT_ROOT/compose.yaml"; then
-            cp "$STUBS_DIR/compose.yaml" "$PROJECT_ROOT/compose.yaml"
+         # Create the target directory first.
+         mkdir -p "$WRIGHTYARD_PATH"
+
+        # Check for and copy files inside the .wrightyard directory.
+        if ask_to_overwrite "$WRIGHTYARD_PATH/compose.yaml"; then
+            cp "$STUBS_DIR/compose.yaml" "$WRIGHTYARD_PATH/compose.yaml"
             echo "-> compose.yaml published."
         else
             echo "-> Skipping compose.yaml."
         fi
 
-        if ask_to_overwrite "$PROJECT_ROOT/.env"; then
-            cp "$STUBS_DIR/.env.example" "$PROJECT_ROOT/.env"
+        if ask_to_overwrite "$WRIGHTYARD_PATH/.env"; then
+            cp "$STUBS_DIR/.env.example" "$WRIGHTYARD_PATH/.env"
             echo "-> .env.example published as .env. Please review it."
         else
             echo "-> Skipping .env."
         fi
 
-        if [ -d "$PROJECT_ROOT/docker" ]; then
-             echo "-> docker/ directory already exists. Skipping copy."
+        # Check for the docker directory inside the .wrightyard directory.
+        if [ -e "$WRIGHTYARD_PATH/docker" ]; then
+             echo "-> A file or directory named 'docker' already exists in '$WRIGHTYARD_DIR/'. Skipping copy."
         else
-            cp -r "$STUBS_DIR/docker" "$PROJECT_ROOT/docker"
+            cp -r "$STUBS_DIR/docker" "$WRIGHTYARD_PATH/docker"
             echo "-> docker/ directory and Dockerfiles published."
         fi
 
         echo "Environment files published!"
+
+        # Call function to configure the package name
+        auto_configure_package_name
+
+        # Call function to update .gitignore
+        update_gitignore
+
+        # Call function to set up aliases
+        setup_aliases
+
         exit 0
         ;;
 
     *)
-        if [ ! -f "$PROJECT_ROOT/compose.yaml" ]; then
-            echo "Error: compose.yaml not found in your project root." >&2
+        COMPOSE_FILE="$WRIGHTYARD_PATH/compose.yaml"
+
+        if [ ! -f "$COMPOSE_FILE" ]; then
+            echo "Error: '$COMPOSE_FILE' not found." >&2
             echo "Please run 'vendor/bin/wrightyard install' first." >&2
             exit 1
         fi
 
-        docker compose --project-name "$PROJECT_NAME" "$@"
+        docker compose --file "$COMPOSE_FILE" --project-name "$PROJECT_NAME" "$@"
         ;;
 esac

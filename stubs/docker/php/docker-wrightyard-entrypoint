@@ -1,7 +1,12 @@
 #!/bin/sh
 set -e
 
-# --- STEP 1: SYNC DOCKER USER TO HOST USER ---
+WORKSPACE_PATH="/workspace"
+OPENCART_PATH="${WORKSPACE_PATH}/.wrightyard/opencart"
+
+cd "$WORKSPACE_PATH"
+
+# --- STEP 1: Sync Docker User to host User ---
 HOST_UID=$(stat -c %u .)
 HOST_GID=$(stat -c %g .)
 
@@ -16,14 +21,9 @@ else
     echo "Host user UID already matches www-data UID. Skipping user modification."
 fi
 
-# --- STEP 2: WAIT FOR DATABASE ---
-echo "Waiting for database connection..."
-until mariadb-admin ping -h"$DB_HOSTNAME" -u"$DB_USERNAME" -p"$DB_PASSWORD" --silent; do
-    sleep 1
-done
-echo "Database is ready."
+mkdir -p "$OPENCART_PATH" && cd "$OPENCART_PATH"
 
-# --- STEP 3: INSTALL OPENCART (if not installed) ---
+# --- STEP 2: Install OpenCart ---
 if [ ! -f "index.php" ]; then
     echo "OpenCart not found. Installing version ${OPENCART_VERSION}..."
     git clone --depth 1 --branch "${OPENCART_VERSION}" https://github.com/opencart/opencart.git .
@@ -48,18 +48,60 @@ else
     echo "OpenCart is already installed. Skipping installation."
 fi
 
-# --- STEP 4: FIX PERMISSIONS (THE FINAL FIX) ---
-echo "Ensuring correct ownership for all files..."
-chown -R www-data:www-data .
+# --- STEP 3: Link local package in dev mode via Composer path repository ---
+if [ "$DEV_MODE" = "true" ]; then
+  COMPOSER_JSON_PATH="$WORKSPACE_PATH/composer.json"
 
-echo "Ensuring storage directory is writable..."
-chmod 755 system/storage/
-chmod 755 system/storage/cache/
-chmod 755 system/storage/logs/
-chmod 755 system/storage/session/
-chmod 755 system/storage/upload/
-chmod 755 system/storage/vendor/
+  if [ -f "$COMPOSER_JSON_PATH" ]; then
+    # Read the package name from the project's composer.json.
+    PACKAGE_NAME=$(php -r 'echo json_decode(file_get_contents("'"$COMPOSER_JSON_PATH"'"))->name;')
 
-# --- STEP 5: START PHP-FPM ---
+    # Sanitize the package name by removing any surrounding quotes.
+    PACKAGE_NAME=$(echo "$PACKAGE_NAME" | tr -d '"')
+
+    if [ -n "$PACKAGE_NAME" ]; then
+      echo "---"
+      echo "📦 Linking local package '$PACKAGE_NAME' in dev mode..."
+
+      echo "1/4: Correcting vendor-dir path for post-installation..."
+      composer config vendor-dir system/storage/vendor/
+
+      echo "2/4: Registering local path repository..."
+      composer config repositories.dev-workspace \
+        '{"type":"path","url":"'"$WORKSPACE_PATH"'","options":{"symlink":true}}'
+
+      echo "3/4: Allowing plugin '$PACKAGE_NAME'..."
+      composer config --no-plugins allow-plugins."$PACKAGE_NAME" true
+
+      echo "4/4: Requiring package '$PACKAGE_NAME'@dev..."
+      composer require "$PACKAGE_NAME":"@dev"
+
+      echo "✅ Link successful."
+      echo "---"
+    else
+      echo "Warning: Could not read package name from $COMPOSER_JSON_PATH."
+    fi
+  else
+    echo "Warning: composer.json not found in $WORKSPACE_PATH. Cannot link package."
+  fi
+fi
+
+# --- STEP 4: Fix permissions ---
+echo "Ensuring correct ownership for all files and directories..."
+chown -R www-data:www-data "$OPENCART_PATH"
+
+echo "Setting correct permissions for directories (755)..."
+find "$OPENCART_PATH" -type d -exec chmod 755 {} +
+
+echo "Setting correct permissions for files (644)..."
+find "$OPENCART_PATH" -type f -exec chmod 644 {} +
+
+echo "Setting specific permissions for system/storage directory (775 for dirs, 664 for files)..."
+find "$OPENCART_PATH"/system/storage -type d -exec chmod 775 {} +
+find "$OPENCART_PATH"/system/storage -type f -exec chmod 664 {} +
+
+echo "Permissions set successfully."
+
+# --- STEP 5: Start PHP-FPM ---
 echo "Starting PHP-FPM..."
 exec "$@"
