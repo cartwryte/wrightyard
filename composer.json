@@ -1,0 +1,21 @@
+{
+    "name": "cartwryte/wrightyard",
+    "description": "A Docker-based development environment for Cartwryte OpenCart tools.",
+    "type": "library",
+    "license": "MIT",
+    "keywords": ["opencart", "docker", "development", "environment", "dev-tools"],
+    "authors": [
+        {
+            "name": "Anton Semenov",
+            "email": "20430159+trydalcoholic@users.noreply.github.com"
+        }
+    ],
+    "homepage": "https://cartwryte.dev",
+    "support": {
+        "issues": "https://github.com/cartwryte/wrightyard/issues",
+        "source": "https://github.com/cartwryte/wrightyard"
+    },
+    "bin": [
+        "bin/wrightyard"
+    ]
+}

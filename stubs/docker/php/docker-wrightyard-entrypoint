@@ -1,0 +1,65 @@
+#!/bin/sh
+set -e
+
+# --- STEP 1: SYNC DOCKER USER TO HOST USER ---
+HOST_UID=$(stat -c %u .)
+HOST_GID=$(stat -c %g .)
+
+if [ "$HOST_UID" -eq 0 ]; then
+    echo "Host user is root. Skipping user modification for security reasons."
+elif [ "$HOST_UID" != "$(id -u www-data)" ]; then
+    echo "Host UID ($HOST_UID) does not match container UID ($(id -u www-data)). Updating www-data user..."
+    groupmod -o -g "$HOST_GID" www-data
+    usermod -o -u "$HOST_UID" www-data
+    echo "User www-data updated."
+else
+    echo "Host user UID already matches www-data UID. Skipping user modification."
+fi
+
+# --- STEP 2: WAIT FOR DATABASE ---
+echo "Waiting for database connection..."
+until mariadb-admin ping -h"$DB_HOSTNAME" -u"$DB_USERNAME" -p"$DB_PASSWORD" --silent; do
+    sleep 1
+done
+echo "Database is ready."
+
+# --- STEP 3: INSTALL OPENCART (if not installed) ---
+if [ ! -f "index.php" ]; then
+    echo "OpenCart not found. Installing version ${OPENCART_VERSION}..."
+    git clone --depth 1 --branch "${OPENCART_VERSION}" https://github.com/opencart/opencart.git .
+    mv upload/* . && rm -rf upload/ && rm -rf .git/
+    cp config-dist.php config.php && cp admin/config-dist.php admin/config.php
+    echo "Running OpenCart CLI installer..."
+    php install/cli_install.php install \
+        --username "$OPENCART_USERNAME" \
+        --password "$OPENCART_PASSWORD" \
+        --email "$OPENCART_ADMIN_EMAIL" \
+        --http_server "$OPENCART_HTTP_SERVER" \
+        --db_driver "$DB_DRIVER" \
+        --db_hostname "$DB_HOSTNAME" \
+        --db_username "$DB_USERNAME" \
+        --db_password "$DB_PASSWORD" \
+        --db_database "$DB_DATABASE" \
+        --db_port "$DB_PORT" \
+        --db_prefix "$DB_PREFIX"
+    rm -rf install
+    echo "OpenCart installation complete."
+else
+    echo "OpenCart is already installed. Skipping installation."
+fi
+
+# --- STEP 4: FIX PERMISSIONS (THE FINAL FIX) ---
+echo "Ensuring correct ownership for all files..."
+chown -R www-data:www-data .
+
+echo "Ensuring storage directory is writable..."
+chmod 755 system/storage/
+chmod 755 system/storage/cache/
+chmod 755 system/storage/logs/
+chmod 755 system/storage/session/
+chmod 755 system/storage/upload/
+chmod 755 system/storage/vendor/
+
+# --- STEP 5: START PHP-FPM ---
+echo "Starting PHP-FPM..."
+exec "$@"

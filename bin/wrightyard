@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+
+# Exit immediately if a command exits with a non-zero status.
+set -e
+
+# --- Variable Definitions ---
+PROJECT_ROOT=$(pwd)
+STUBS_DIR="$(cd "$(dirname "$0")/../stubs" && pwd)"
+PROJECT_NAME=$(basename "$PROJECT_ROOT")
+
+# --- Helper function for interactive prompts ---
+ask_to_overwrite() {
+    local target_file=$1
+    if [ -f "$target_file" ]; then
+        read -p "File '$target_file' already exists. Overwrite? [y/N] " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            return 1
+        fi
+    fi
+    return 0
+}
+
+# --- Command Parsing ---
+case "$1" in
+    install)
+        echo "Publishing Wrightyard environment files..."
+
+        if ask_to_overwrite "$PROJECT_ROOT/compose.yaml"; then
+            cp "$STUBS_DIR/compose.yaml" "$PROJECT_ROOT/compose.yaml"
+            echo "-> compose.yaml published."
+        else
+            echo "-> Skipping compose.yaml."
+        fi
+
+        if ask_to_overwrite "$PROJECT_ROOT/.env"; then
+            cp "$STUBS_DIR/.env.example" "$PROJECT_ROOT/.env"
+            echo "-> .env.example published as .env. Please review it."
+        else
+            echo "-> Skipping .env."
+        fi
+
+        if [ -d "$PROJECT_ROOT/docker" ]; then
+             echo "-> docker/ directory already exists. Skipping copy."
+        else
+            cp -r "$STUBS_DIR/docker" "$PROJECT_ROOT/docker"
+            echo "-> docker/ directory and Dockerfiles published."
+        fi
+
+        echo "Environment files published!"
+        exit 0
+        ;;
+
+    *)
+        if [ ! -f "$PROJECT_ROOT/compose.yaml" ]; then
+            echo "Error: compose.yaml not found in your project root." >&2
+            echo "Please run 'vendor/bin/wrightyard install' first." >&2
+            exit 1
+        fi
+
+        docker compose --project-name "$PROJECT_NAME" "$@"
+        ;;
+esac

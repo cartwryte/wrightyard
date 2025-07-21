@@ -1,0 +1,17 @@
+#!/bin/sh
+set -e
+
+# The path to the directory we are waiting for, must match the DocumentRoot.
+DOCUMENT_ROOT="/var/www/html"
+
+echo "Apache entrypoint: Waiting for document root ${DOCUMENT_ROOT} to be created..."
+
+# Wait loop: checks for the existence of the 'admin' directory.
+while [ ! -d "$DOCUMENT_ROOT/admin" ]; do
+  sleep 1
+done
+
+echo "Apache entrypoint: Document root found. Starting Apache..."
+
+# Execute the command passed to this script, which is the CMD from the Dockerfile.
+exec "$@"
